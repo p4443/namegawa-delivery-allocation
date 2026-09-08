@@ -2,6 +2,7 @@ const KEY = 'delivery-desk-v4';
 const SHARED_STATE_URL = '/api/state';
 const ROUTE_MATRIX_URL = '/api/route-matrix';
 const MAX_ROUTE_STOPS = 18;
+const ZENRIN_MAP_URL = 'https://dmapnavi.jp/smart/top/';
 
 // スタイル・ダイアログの追加
 const manualStyle = document.createElement('style');
@@ -37,7 +38,7 @@ manualDialog.innerHTML = `<div class="manual-content">
 <h3>1. 店舗拠点の変更</h3>
 <p>画面右上の「📍 拠点変更」ボタンまたは設定画面から、配送の起点となる店舗拠点を選択・登録・即時切り替えできます。</p>
 <h3>2. 音声入力と自動解析能力</h3>
-<p>「🎤 音声」ボタンを押して「坂戸市千代田1-2 コンテナ大2個 クーラー小ひとつ」のように話しかけてください。「ひとつ」「ふたつ」等の音声特有の数詞や「かける」「ケース」「箱」も自動識別されます。</p>
+<p>「🎤 音声」ボタンを押して「坂戸市千代田1-2.1.1.1.1.1」のように、住所のあとにケース、コンテナ大、コンテナ小、クーラー大、クーラー小の数量を順番に話してください。従来の「住所 コンテナ大2個 クーラー小ひとつ」形式も利用できます。</p>
 <h3>3. 店舗拠点発着の最適ルート・AB配分</h3>
 <ol>
 <li>対象便の配送先を追加します。</li>
@@ -45,8 +46,8 @@ manualDialog.innerHTML = `<div class="manual-content">
 <li>選択された店舗拠点を出発し、すべての配送先を巡回して店舗へ帰還する最短巡回ルート（TSP）を自前計算します。</li>
 <li>ドライバーA・B間の往復走破距離および負担が均等になるよう自動配分し、巡回順（①, ②, ③…）に並べ替えます。</li>
 </ol>
-<h3>4. 一括Google Maps巡回ナビ</h3>
-<p>配分後、ドライバー列のヘッダーに表示される「🗺️ 一括巡回ナビ」を押すと、店舗発〜経由地〜店舗帰還までの全ルートがGoogle Mapsに一括読み込みされます。</p>
+<h3>4. 地図確認と一括巡回ナビ</h3>
+<p>配送カードの「ゼンリン地図」からゼンリン地図ナビを開けます。配分後、ドライバー列のヘッダーに表示される「🗺️ 一括巡回ナビ」を押すと、店舗発〜経由地〜店舗帰還までの全ルートがGoogle Mapsに一括読み込みされます。</p>
 <h3>5. 担当・状態の調整と端末共有</h3>
 <p>カードをドラッグ＆ドロップして手動移動したり、「上へ」「下へ」で順番を微調整できます。設定・実走状態はリアルタイムに端末間で共有されます。</p>
 </div>`;
@@ -185,11 +186,22 @@ function quantity(value) {
   if (!match) return 1;
   const kanji = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
   const normalized = match[1].replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
-  return Number(normalized) || kanji[normalized] || 1;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : kanji[normalized] || 1;
 }
 
 function parseCargoes(text) {
   const normalizedText = normalizeSpeechText(text);
+  const sequenceMatch = normalizedText.match(/^[^。.．]+[。.．]\s*([0-9０-９一二三四五六七八九十]+(?:\s*[。.．]\s*[0-9０-９一二三四五六七八九十]+){4})\s*$/);
+  if (sequenceMatch) {
+    const quantities = sequenceMatch[1].split(/[。.．]/).map((value) => quantity(value.trim()));
+    const sequenceLabels = ['飲料ケース', 'コンテナ大', 'コンテナ小', 'クーラー大', 'クーラー小'];
+    return sequenceLabels.flatMap((label, index) => {
+      const item = state.master.find((entry) => entry.label === label);
+      const qty = quantities[index];
+      return item && qty > 0 ? [{ masterId: item.id, label: item.label, qty, pt: Number(item.pt), weight: Number(item.weight) }] : [];
+    });
+  }
   const cargoText = normalizedText.replace(/[0-9０-９]+(?:[.．][0-9０-９]+)?\s*(?:km|ＫＭ|キロ|كيلومتر)/gi, '');
   const compact = cargoText.replace(/[\s、,，。.．/]/g, '');
   const found = [];
@@ -252,7 +264,7 @@ function parseDelivery(raw, previous = {}) {
 }
 
 function mapsUrl(address) {
-  return `https://www.google.com/maps/dir/?${new URLSearchParams({ api: '1', origin: `${state.origin.name} ${state.origin.address}`, destination: address, travelmode: 'driving' })}`;
+  return ZENRIN_MAP_URL;
 }
 
 function multiRouteUrl(assignedItems) {
@@ -418,13 +430,13 @@ function card(item) {
   const element = document.createElement('article');
   element.className = 'card';
   element.draggable = true;
-  element.innerHTML = `<div class="top"><div>${item.routeOrder ? `<span class="seq-badge">巡回 ${item.routeOrder}</span>` : ''}<strong></strong></div><button class="mini danger delete">削除</button></div><div class="cargo"></div><div class="meta"></div><div class="actions"><a class="mini map" target="_blank" rel="noopener noreferrer">地図</a><button class="mini address-edit">住所編集</button><input class="distance-input" type="number" min="0" step="0.1" aria-label="走行距離 km" placeholder="距離 km"><button class="mini edit">編集・再解析</button><button class="mini up">上へ</button><button class="mini down">下へ</button><select class="smallselect"><option>未配達</option><option>配達完了</option><option>不在</option><option>持ち戻り</option></select></div>`;
+  element.innerHTML = `<div class="top"><div>${item.routeOrder ? `<span class="seq-badge">巡回 ${item.routeOrder}</span>` : ''}<strong></strong></div><button class="mini danger delete">削除</button></div><div class="cargo"></div><div class="meta"></div><div class="actions"><a class="mini map" target="_blank" rel="noopener noreferrer">ゼンリン地図</a><button class="mini address-edit">住所編集</button><input class="distance-input" type="number" min="0" step="0.1" aria-label="走行距離 km" placeholder="距離 km"><button class="mini edit">編集・再解析</button><button class="mini up">上へ</button><button class="mini down">下へ</button><select class="smallselect"><option>未配達</option><option>配達完了</option><option>不在</option><option>持ち戻り</option></select></div>`;
   element.querySelector('strong').textContent = item.name;
   element.querySelector('.cargo').textContent = item.cargoes.length ? `荷物: ${item.cargoes.map((cargo) => `${cargo.label} ${cargo.qty}個`).join(' / ')}` : '荷物: 未入力';
   element.querySelector('.meta').textContent = `距離 ${item.distanceKm === null || item.distanceKm === undefined ? '概算' : `${item.distanceKm.toFixed(1)} km`} ${item.distancePt.toFixed(1)} pt + 荷物 ${item.cargoPt.toFixed(1)} pt / ${item.weight.toFixed(1)} kg`;
   element.querySelector('.map').href = mapsUrl(item.address);
   element.querySelector('.address-edit').onclick = () => {
-    const address = prompt('Google Maps で確認した配送先住所を入力してください。', item.address);
+    const address = prompt('ゼンリン地図で確認した配送先住所を入力してください。', item.address);
     if (address?.trim()) {
       item.address = address.trim();
       item.name = item.address;
@@ -541,7 +553,39 @@ function render() {
     assigned.length ? assigned.forEach((item) => zone.append(card(item))) : zone.innerHTML = `<p class="empty">${driver.id ? 'ここへドラッグ' : '追加した配送先が表示されます'}</p>`;
     dispatch.append(column);
   });
+  renderAddressList(items);
   renderHistory();
+}
+
+function renderAddressList(items) {
+  let panel = document.querySelector('.address-panel');
+  if (!panel) {
+    panel = document.createElement('section');
+    panel.className = 'panel address-panel';
+    panel.innerHTML = '<div class="head"><h2>住所リスト</h2><button class="btn" id="copyAddresses" type="button">住所を一括コピー</button></div><p class="note">番地まで登録された住所を1件ずつ確認できます。</p><div class="address-list"></div>';
+    $('dispatch').after(panel);
+  }
+  const list = panel.querySelector('.address-list');
+  list.replaceChildren();
+  if (!items.length) {
+    list.innerHTML = '<p class="address-empty">登録された住所はありません。</p>';
+  } else {
+    items.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.className = 'address-row';
+      row.innerHTML = `<span class="address-number">${index + 1}</span><span class="address-text"></span><button class="mini copy-address" type="button">コピー</button><a class="mini map" href="${mapsUrl(item.address)}" target="_blank" rel="noopener noreferrer">ゼンリン地図</a>`;
+      row.querySelector('.address-text').textContent = item.address;
+      row.querySelector('.copy-address').onclick = async () => {
+        await navigator.clipboard.writeText(item.address);
+        $('message').textContent = `住所をコピーしました: ${item.address}`;
+      };
+      list.append(row);
+    });
+  }
+  panel.querySelector('#copyAddresses').onclick = async () => {
+    await navigator.clipboard.writeText(items.map((item, index) => `${index + 1}. ${item.address}`).join('\n'));
+    $('message').textContent = `${items.length}件の住所をコピーしました。`;
+  };
 }
 
 function renderHistory() {
@@ -675,7 +719,7 @@ function initSpeech() {
 
     micBtn.classList.add('mic-listening');
     micBtn.textContent = '⏹ 録音中…';
-    $('message').textContent = '音声認識中… 住所・荷物をお話しください。';
+    $('message').textContent = '音声認識中… 住所のあとに、ケース・コンテナ大・コンテナ小・クーラー大・クーラー小の数量を順番にお話しください。';
 
     recognition.onresult = (event) => {
       let transcript = '';
@@ -705,7 +749,7 @@ function initSpeech() {
   };
 }
 
-$('input').placeholder = '例: 高坂、ケース2、コンテナ大小、クーラー大2';
+$('input').placeholder = '例: 高坂.1.1.1.1.1';
 $('add').onclick = add;
 $('input').onkeydown = (event) => { if (event.key === 'Enter') add(); };
 $('date').onchange = (event) => { workDate = event.target.value; render(); };
