@@ -2,7 +2,6 @@ const KEY = 'delivery-desk-v4';
 const SHARED_STATE_URL = '/api/state';
 const ROUTE_MATRIX_URL = '/api/route-matrix';
 const MAX_ROUTE_STOPS = 18;
-const ZENRIN_MAP_URL = 'https://dmapnavi.jp/smart/top/';
 
 // スタイル・ダイアログの追加
 const manualStyle = document.createElement('style');
@@ -46,8 +45,8 @@ manualDialog.innerHTML = `<div class="manual-content">
 <li>選択された店舗拠点を出発し、すべての配送先を巡回して店舗へ帰還する最短巡回ルート（TSP）を自前計算します。</li>
 <li>ドライバーA・B間の往復走破距離および負担が均等になるよう自動配分し、巡回順（①, ②, ③…）に並べ替えます。</li>
 </ol>
-<h3>4. 地図確認と一括巡回ナビ</h3>
-<p>配送カードの「ゼンリン地図」からゼンリン地図ナビを開けます。配分後、ドライバー列のヘッダーに表示される「🗺️ 一括巡回ナビ」を押すと、店舗発〜経由地〜店舗帰還までの全ルートがGoogle Mapsに一括読み込みされます。</p>
+<h3>4. Google Maps地図確認と一括巡回ナビ</h3>
+<p>配送カードの「Google Maps」で店舗から配送先までのルートを確認できます。配分後、ドライバー列のヘッダーに表示される「🗺️ 一括巡回ナビ」を押すと、店舗発〜経由地〜店舗帰還までの全ルートがGoogle Mapsに一括読み込みされます。</p>
 <h3>5. 担当・状態の調整と端末共有</h3>
 <p>カードをドラッグ＆ドロップして手動移動したり、「上へ」「下へ」で順番を微調整できます。設定・実走状態はリアルタイムに端末間で共有されます。</p>
 </div>`;
@@ -264,7 +263,7 @@ function parseDelivery(raw, previous = {}) {
 }
 
 function mapsUrl(address) {
-  return ZENRIN_MAP_URL;
+  return `https://www.google.com/maps/dir/?${new URLSearchParams({ api: '1', origin: `${state.origin.name} ${state.origin.address}`, destination: address, travelmode: 'driving' })}`;
 }
 
 function multiRouteUrl(assignedItems) {
@@ -430,13 +429,13 @@ function card(item) {
   const element = document.createElement('article');
   element.className = 'card';
   element.draggable = true;
-  element.innerHTML = `<div class="top"><div>${item.routeOrder ? `<span class="seq-badge">巡回 ${item.routeOrder}</span>` : ''}<strong></strong></div><button class="mini danger delete">削除</button></div><div class="cargo"></div><div class="meta"></div><div class="actions"><a class="mini map" target="_blank" rel="noopener noreferrer">ゼンリン地図</a><button class="mini address-edit">住所編集</button><input class="distance-input" type="number" min="0" step="0.1" aria-label="走行距離 km" placeholder="距離 km"><button class="mini edit">編集・再解析</button><button class="mini up">上へ</button><button class="mini down">下へ</button><select class="smallselect"><option>未配達</option><option>配達完了</option><option>不在</option><option>持ち戻り</option></select></div>`;
+  element.innerHTML = `<div class="top"><div>${item.routeOrder ? `<span class="seq-badge">巡回 ${item.routeOrder}</span>` : ''}<strong></strong></div><button class="mini danger delete">削除</button></div><div class="cargo"></div><div class="meta"></div><div class="actions"><a class="mini map" target="_blank" rel="noopener noreferrer">Google Maps</a><button class="mini address-edit">住所編集</button><input class="distance-input" type="number" min="0" step="0.1" aria-label="走行距離 km" placeholder="距離 km"><button class="mini edit">編集・再解析</button><button class="mini up">上へ</button><button class="mini down">下へ</button><select class="smallselect"><option>未配達</option><option>配達完了</option><option>不在</option><option>持ち戻り</option></select></div>`;
   element.querySelector('strong').textContent = item.name;
   element.querySelector('.cargo').textContent = item.cargoes.length ? `荷物: ${item.cargoes.map((cargo) => `${cargo.label} ${cargo.qty}個`).join(' / ')}` : '荷物: 未入力';
   element.querySelector('.meta').textContent = `距離 ${item.distanceKm === null || item.distanceKm === undefined ? '概算' : `${item.distanceKm.toFixed(1)} km`} ${item.distancePt.toFixed(1)} pt + 荷物 ${item.cargoPt.toFixed(1)} pt / ${item.weight.toFixed(1)} kg`;
   element.querySelector('.map').href = mapsUrl(item.address);
   element.querySelector('.address-edit').onclick = () => {
-    const address = prompt('ゼンリン地図で確認した配送先住所を入力してください。', item.address);
+    const address = prompt('Google Mapsで確認した配送先住所を入力してください。', item.address);
     if (address?.trim()) {
       item.address = address.trim();
       item.name = item.address;
@@ -562,7 +561,7 @@ function renderAddressList(items) {
   if (!panel) {
     panel = document.createElement('section');
     panel.className = 'panel address-panel';
-    panel.innerHTML = '<div class="head"><h2>住所リスト</h2><button class="btn" id="copyAddresses" type="button">住所を一括コピー</button></div><p class="note">番地まで登録された住所を1件ずつ確認できます。</p><div class="address-list"></div>';
+    panel.innerHTML = '<div class="head"><h2>住所リスト</h2><button class="btn" id="copyAddresses" type="button">住所を一括コピー</button></div><p class="note">番地まで登録された住所を1件ずつGoogle Mapsで確認できます。</p><div class="address-list"></div>';
     $('dispatch').after(panel);
   }
   const list = panel.querySelector('.address-list');
@@ -573,7 +572,7 @@ function renderAddressList(items) {
     items.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = 'address-row';
-      row.innerHTML = `<span class="address-number">${index + 1}</span><span class="address-text"></span><button class="mini copy-address" type="button">コピー</button><a class="mini map" href="${mapsUrl(item.address)}" target="_blank" rel="noopener noreferrer">ゼンリン地図</a>`;
+      row.innerHTML = `<span class="address-number">${index + 1}</span><span class="address-text"></span><button class="mini copy-address" type="button">コピー</button><a class="mini map" href="${mapsUrl(item.address)}" target="_blank" rel="noopener noreferrer">Google Maps</a>`;
       row.querySelector('.address-text').textContent = item.address;
       row.querySelector('.copy-address').onclick = async () => {
         await navigator.clipboard.writeText(item.address);
